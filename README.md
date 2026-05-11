@@ -172,3 +172,7 @@ Note that by default prove.sh uses the "--git" option of prove.py to get the com
 ## To restart from a previous campaign:
 Locate a **completed** log file produced by a previous campaign, for example `query_Conf[C]_2560.txt` (`2560` indicates the timeout used at this step) and use the `prove.sh` script as follows (`5120` is the timeout for the first step of this campaign, here we just double the timeout):
 - `$ ./prove.sh "Conf[C]" "RSA, None|Sign|Encrypt, reopen, SNoAA|SSec, anon|pwd|cert, switch, lt_leaks" 5120 "query_Conf[C]_2560.txt"`
+
+
+# Proof of Proposed Fixes:
+TBD
