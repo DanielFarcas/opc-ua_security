@@ -176,11 +176,11 @@ Locate a **completed** log file produced by a previous campaign, for example `qu
 
 # Proof of Proposed Fixes:
 ## New Files
-- Current attempt focuses on Fig. 17 from the eprint paper.
+- Current attempt focuses on fixes from the latest version of OPC UA 
 - baseline_opcua.pv and basline_conf.pvl are the specs generated from running '$ python3 opcua.py -q "3.1.reopen" -c "ECC, Sign, no_reopen, SSec, cert, switch, lt_leaks" --html` , useful for comparison
-- modified_opcua* files are current working versions of the fixes.
+- opcua_fixes* files are current working versions of the fixes.
 ## Progress
-- $h_c$ has been added. This spec terminates as long as $h_c$ is rebound to the new channel on switching.
-- The SessionTransferToken ($tok_{stt}$) has also been added
-- When switching is allowed, binding $C_{nonce}$ or $h_c$ to the original channel causes non-termination. 
-- Currently: modified_opcua_hc_ONLY.pv and modified_opcua_hc_tokstt_NO_Cnonce.pv will terminate, modified_opcua_hc_with_Cnonce.pv and modified_opcua_hc_tokstt_with_Cnonce.pv will not.
+- $h_c$ has been added.
+- Storing C_nonce in the Session tables causes non-termination.
+- opcua_fixes.pv keeps C_nonce in the Session tables, but this will not terminate.
+- opcua_fixes_nonce_table.pv puts C_nonce in a separate table, and does terminate.
