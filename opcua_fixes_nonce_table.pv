@@ -145,7 +145,8 @@ fun CH(CH_header, CH_payload): bitstring                               [data]. (
 fun OPN_header(chid, cryptography, certificate, thumbprint): CH_header [data]. (* same for request/response *)
 fun MSG_header(chid, chtoken): CH_header                               [data]. (* same for request/response *)
 fun OPN_req (nonce, chmode, nonce): CH_payload                         [data]. (* requestId, Enc/Sign, Cnonce *)
-fun OPN_resp(nonce, chid, chtoken, nonce, bitstring): CH_payload                  [data]. (* requestId, channelId, tokenId, Snonce *)
+(*Added Channel Thumbprint to open response*)
+fun OPN_resp(nonce, chid, chtoken, nonce, bitstring): CH_payload       [data]. (* requestId, channelId, tokenId, Snonce *)
 fun MSG_req (nonce, bitstring): CH_payload                             [data]. (* requestId, request*)
 fun MSG_resp(nonce, bitstring): CH_payload                             [data]. (* requestId, response *)
 fun CH_req_c (bitstring): CH_payload                                   [data]. (* OPN/MSG request  with signed or/and encrypted payload *)
@@ -181,6 +182,7 @@ fun BasicResp(nonce)        : bitstring [data].
 
 (* Tables *)
 (* These tables record all the communication elements created by application instances. *)
+(*DF: These tables now contain the channel thumbprint *)
 table C_channels(certificate, certificate, chmode, chid, chkeys, bitstring).
 table S_channels(certificate, certificate, chmode, chid, chkeys, bitstring).
 
@@ -189,6 +191,7 @@ table S_sessions(pkey, pkey, seid, stoken, smode, channel_, login, utoken, expon
 (* Because events and tables are handled differently during resolution, we introduce insert events triggered each time we insert an item *)
 
 (* Authentication Service, accessible by servers and clients *)
+(*DF2:Added extra tables for for storing nonces*)
 table S_cnonce(stoken, nonce).
 table C_cnonce(stoken, nonce).
 table users(login, psswrd, skey, certificate).
@@ -278,6 +281,7 @@ event insert_S_sessions(pkey, pkey, seid, stoken, smode, channel_, login, utoken
 (* replacePayload will: replace the payload field of CH_m with cipher, with the appropriate request/response payload wrapper *)
 letfun replacePayload(CH_m: bitstring, cipher: bitstring) =
    let CH(header: CH_header, OPN_req (rqid: nonce, m: chmode, cn: nonce))              = CH_m in CH(header, CH_req_c (cipher)) else (
+      (*DF:Added the Channel Thumbprint*)
    let CH(header: CH_header, OPN_resp(rqid: nonce, id: chid, tok: chtoken, sn: nonce, req: bitstring)) = CH_m in CH(header, CH_resp_c(cipher)) else (
    let CH(header: CH_header, MSG_req (rqid: nonce, request: bitstring))                = CH_m in CH(header, CH_req_c (cipher)) else (
    let CH(header: CH_header, MSG_resp(rqid: nonce, response: bitstring))               = CH_m in CH(header, CH_resp_c(cipher))
@@ -304,7 +308,7 @@ letfun CH_sign_enc(CH_m: bitstring, mode: chmode, crypto: cryptography, E_sk: sk
       let cipher = aenc(sigma, R_pk) in
          replacePayload(CH_m, cipher)
    ).
-
+(*DF:Edited this helper to include isClient bool, as it is used by both client and server *)
 letfun CH_check_dec(isClient: bool, CH_m: bitstring, mode: chmode, crypto: cryptography, R_sk: skey, E_pk: pkey) =
    let CH(head: CH_header, payload: CH_payload) = CH_m in
    if mode = None then (CH_m) (* no check and returns in plaintext *)
@@ -406,6 +410,7 @@ letfun CH_rcv(isClient: bool, mode: chmode, id: chid, symkeys: chkeys, msg: bits
 (* Handling the special case of a server receiving a message on a channel *)
 letfun S_rcv(S_cert: certificate, msg: bitstring) =
    let CH(MSG_header(id: chid, token: chtoken), pay: CH_payload) = msg in
+   (*DF: Channel Thumbprint is now in the table*)
    get S_channels(C_cert: certificate, =S_cert, mode: chmode, =id, symkeys: chkeys, h_c: bitstring) suchthat allowed_channel(mode) in
    let crypto = get_crypto(S_cert) in
    let S_pk = get_pk(S_cert) in
@@ -430,6 +435,7 @@ letfun S_rcv(S_cert: certificate, msg: bitstring) =
 
 let Create_Session (C_sk: skey, SC: channel_, check: smode) =
    let chan(C_cert: certificate, S_cert: certificate, mode: chmode, ch: chid, symkeys: chkeys) = SC in
+   (*DF: Channel Thumbprint is now in the table*)
    get C_channels(=C_cert, =S_cert, =mode, =ch, =symkeys, h_c: bitstring) suchthat allowed_channel(mode) in
    if get_pk(C_cert) = pk(C_sk) then
    let key_tk = (if mode = None then no_token else (
@@ -457,11 +463,13 @@ let Create_Session (C_sk: skey, SC: channel_, check: smode) =
       if crypto = RSA then no_hk else
       if crypto = ECC then get_hk(S_ek, S_pk)
    ) in
+   (*DF:Channel Thumprint and, extra Channel Cert, Server Cert and Server nonce are now in Session Creation response*)
    if (check = SNone || verify(signature, (h_c, C_cert, S_cert, C_cert, C_nonce, S_nonce), S_pk)) then
    out(c, id); (* the session number is public *)
    let C_sess = sess(C_pk, S_pk, SC, mode, check, id, token) in
    event C_Session(C_sess);
    event insert_C_sessions(C_pk, S_pk, id, token, check, SC, anonymous, user_none, S_hk, S_nonce, C_sk);
+   (*DF2: Table for sessions includes channel thumbprint but separate table stores client nonce*)
    insert C_cnonce(token, C_nonce);
    insert C_sessions(C_pk, S_pk, id, token, check, SC, anonymous, user_none, S_hk, S_nonce, C_sk, h_c);
    event C_Created_Session(token, check).
@@ -485,6 +493,7 @@ let Open_Channel_Create_Session (C_cert,S_cert: certificate, C_sk: skey, mode: c
 
    (* Checking first opening or reopening allowed and existing old channel *)
    if not(is_reopen) || (reopening_allowed() && (mode <> None)) then
+   (*DF: include the (possibly old) Channel Thumbpront*)
    let _ = (if is_reopen then (get C_channels(=C_cert, =S_cert, =mode, =id, O_keys: chkeys, O_hc: bitstring) in ()) else ()) in
 
    (* Sending OPN request *)
@@ -495,6 +504,7 @@ let Open_Channel_Create_Session (C_cert,S_cert: certificate, C_sk: skey, mode: c
 
    (* Receiving and checking OPN response *)
    in(c, OPNresp: bitstring);
+   (*DF: the open response should contain the open request*)
    let CH(OPN_header(ch_s: chid, =crypto, =S_cert, print: thumbprint), resp_payload: CH_payload) = CH_check_dec(true, OPNresp, mode, crypto, C_sk, S_pk) in
    let OPN_resp(=RqID, =ch_s, token: chtoken, S_nonce_or_hk: nonce, =OPNreq) = resp_payload in
    if not(is_reopen) || ch_s = id then (* when reopening, the channel id in the response must be the same as the one in the request *)
@@ -504,6 +514,7 @@ let Open_Channel_Create_Session (C_cert,S_cert: certificate, C_sk: skey, mode: c
       || (crypto = ECC && print = h(C_pk))  (* Fixed: thumbprint should be the hash of receiver's cert. *)
     
    then
+   (*DF:The open response sent by the server is then used as the channel thumbprint *)
    let h_c = OPNresp in
    let sym_keys = if mode = None then no_keys else (
       if crypto = RSA then (
@@ -540,6 +551,7 @@ let Open_Channel_Create_Session (C_cert,S_cert: certificate, C_sk: skey, mode: c
    | if is_reopen then (
        !(get C_sessions(=C_pk, =S_pk, sessid: seid, SAtoken: stoken, check2: smode,
             chan(=C_cert, =S_cert, =mode, =ch_s, O_keys: chkeys),
+            (*DF: if we are using an existing session on a new channel, we expect a different channel thumbprint*)
             O_usr: login, O_tk: utoken, O_hk: G, O_nonce: nonce, =C_sk, new_h_c:bitstring) in
          event C_reopened(chan(C_cert, S_cert, mode, ch_s, sym_keys));
          event insert_C_sessions(C_pk,S_pk, sessid, SAtoken, check2,
@@ -566,6 +578,7 @@ let Activate_Session (usr: login, U_tk: utoken, U_pwd: psswrd, U_sk: skey, U_cer
    let crypto = get_crypto(S_cert) in
    if allowed_crypto(crypto) then
    (* Client provides a signature only when check = SSec *)
+   (*DF:The channel thumbprint, extra server cert, client cert and client nonce are now inlcuded *)
    let signature = (if check = SSec then asign( (h_c, S_cert, S_cert, C_cert, O_nonce, C_nonce), C_sk) else void) in
    (* user "anonymous" is reserved to the user_anon authentication *)
    if (U_tk = user_anon && usr = anonymous) || (U_tk <> user_anon && usr <> anonymous) then
@@ -606,6 +619,7 @@ let Activate_Session (usr: login, U_tk: utoken, U_pwd: psswrd, U_sk: skey, U_cer
    event C_Activated_Session(SAtoken, U_tk);
    event C_Activation(C_pk, S_pk, mode, check, C_sess, usr, U_tk);
    event insert_C_sessions(C_pk, S_pk, id, SAtoken, check, SC, usr, U_tk, S_hk, S_nonce, C_sk);
+   (*DF: the channel thumbprint now binds the channel to the session*)
    insert C_sessions(C_pk, S_pk, id, SAtoken, check, SC, usr, U_tk, S_hk, S_nonce, C_sk, h_c).
 
 (* Switch Sessions from a channel to another *)
@@ -613,8 +627,10 @@ let Activate_Session (usr: login, U_tk: utoken, U_pwd: psswrd, U_sk: skey, U_cer
 let Switch_Channel (usr: login, U_tk: utoken, U_pwd: psswrd, U_sk: skey, U_cert: certificate) =
    (* One can only switch the channel of an already activated and secured session *)
    if U_tk <> user_none then
+   (*DF: the old channel thumbprint*)
    get C_sessions(C_pk,S_pk: pkey, id: seid, SAtoken: stoken, check: smode, O_SC: channel_,
                  =usr, =U_tk, O_hk: G, O_nonce: nonce, C_sk: skey, h_c: bitstring) in
+   (*DF2:get client nonce separately *)
    get C_cnonce(=SAtoken, C_nonce: nonce) in
    if allowed_session(check) then
    let chan(C_cert,S_cert: certificate, mode: chmode, O_ch: chid, O_keys: chkeys) = O_SC in
@@ -622,6 +638,7 @@ let Switch_Channel (usr: login, U_tk: utoken, U_pwd: psswrd, U_sk: skey, U_cert:
    new RqID[id, usr, U_tk]: nonce;
    out(c, RqID);
    (* An activation request that changes the channel but not the user. *)
+   (*DF:get a new channel with a different thumbprint *)
    get C_channels(=C_cert, =S_cert, =mode, ch: chid, symkeys: chkeys, new_h_c: bitstring) suchthat ch <> O_ch in
    let SC = chan(C_cert, S_cert, mode, ch, symkeys) in
    let crypto = get_crypto(S_cert) in
@@ -667,6 +684,7 @@ let Switch_Channel (usr: login, U_tk: utoken, U_pwd: psswrd, U_sk: skey, U_cert:
    event C_Switched_Session(SAtoken, U_tk);
    event C_Activation(C_pk, S_pk, mode, check, C_sess, usr, U_tk);
    event insert_C_sessions(C_pk, S_pk, id, SAtoken, check, SC, usr, U_tk, S_hk, S_nonce, C_sk);
+   (*DF: update the session table to bind to new channel instead*)
    insert C_sessions(C_pk, S_pk, id, SAtoken, check, SC, usr, U_tk, S_hk, S_nonce, C_sk, new_h_c).
 
 
@@ -773,7 +791,7 @@ let Server(S_sk: skey, S_cert: certificate, crypto: cryptography, mode: chmode, 
    let (SC_id:chid, O_keys:chkeys) = (if is_reopen then (get S_channels(=C_cert, =S_cert, =mode, =ch, O_keys: chkeys, h_c: bitstring) in (ch, O_keys)) else
     (new ch_n[C_pk, S_pk, mode]:                chid; (ch_n, no_keys))
    ) in
-
+   (*DF:this has to be moved up to define the channel thumbprint*)
    let hcert = if crypto = RSA then h(C_pk) else  h(C_pk)  in
    let (scert: certificate, dst_print: thumbprint, token: chtoken) =
       if mode = None then (null_cert, no_print, no_token) else (S_cert, hcert, Token) in
@@ -822,7 +840,7 @@ let Server(S_sk: skey, S_cert: certificate, crypto: cryptography, mode: chmode, 
       out(c, id); (* Session ID is public *)
       
       new S_nonce[id, ch]: nonce; 
-      
+      (*DF:This needed to be moved down so that S_nonce is defined to be put in the signature*)
       let SessionReq(payload: bitstring) = req in (
          let (C_nonce: nonce, C_app_cert: certificate) = payload in
       let signature: bitstring =
@@ -840,8 +858,10 @@ let Server(S_sk: skey, S_cert: certificate, crypto: cryptography, mode: chmode, 
       let create_resp = SessionResp(S_ek, id, SAtoken, S_nonce, S_cert, signature) in (* S_cert and signature are sent even in SNone *)
       event S_Session(sn);
       event insert_S_sessions(C_pk, S_pk, id, SAtoken, check, SC, anonymous, user_none, er, S_nonce);
-      insert S_cnonce(SAtoken, C_nonce);
+      (*DF:update the server sessions table to keep track of the channel thumbprint and client nonce too*)
       insert S_sessions(C_pk, S_pk, id, SAtoken, check, SC, anonymous, user_none, er, S_nonce, h_c);
+      (*DF2: store client nonce separately*)
+      insert S_cnonce(SAtoken, C_nonce);
       event S_Created_Session(SAtoken, check);
       out(c, CH_send(false, S_cert, C_cert, mode, ch, symkeys, RqID, create_resp))
    ) else
@@ -1136,7 +1156,7 @@ process
     let U_cert = certify(user, any, U_pk) in out(c, U_cert);
     event new_user(usr, U_pwd, U_sk, U_pk, U_cert);
     insert users(usr, U_pwd, U_sk, U_cert);
-   !(  in(c, U_tk: utoken) ;
+   !(  in(c, U_tk: utoken) [precise];
        if allowed_token(U_tk) then
        let (u: login, utk: utoken, upwd: psswrd, usk: skey, ucert: certificate) =
           if U_tk = user_anon
